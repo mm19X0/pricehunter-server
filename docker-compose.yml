@@ -1,0 +1,29 @@
+services:
+  api:
+    build: .
+    restart: unless-stopped
+    environment:
+      PRICEHUNTER_DB: /data/prices.db
+      REFRESH_API_KEY: ${REFRESH_API_KEY:?Set REFRESH_API_KEY in the environment}
+    volumes:
+      - pricehunter-data:/data
+
+  proxy:
+    image: caddy:2-alpine
+    restart: unless-stopped
+    environment:
+      API_DOMAIN: ${API_DOMAIN:?Set API_DOMAIN to a DNS name pointing to this server}
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy-data:/data
+      - caddy-config:/config
+    depends_on:
+      - api
+
+volumes:
+  pricehunter-data:
+  caddy-data:
+  caddy-config:
