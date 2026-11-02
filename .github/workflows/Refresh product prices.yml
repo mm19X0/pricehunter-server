@@ -26,8 +26,8 @@ jobs:
 
       - name: Install server dependencies
         run: pip install -r requirements.txt
-        working-directory: server
+     
 
       - name: Fetch and save product prices
         run: python main.py
-        working-directory: server
+       
