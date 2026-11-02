@@ -1,0 +1,33 @@
+name: Refresh product prices
+
+on:
+  schedule:
+    - cron: "0 */3 * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  refresh:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    env:
+      DATABASE_URL: ${{ secrets.DATABASE_URL }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Check database configuration
+        run: test -n "$DATABASE_URL"
+
+      - name: Install server dependencies
+        run: pip install -r requirements.txt
+        working-directory: server
+
+      - name: Fetch and save product prices
+        run: python main.py
+        working-directory: server
