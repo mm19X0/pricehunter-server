@@ -43,13 +43,23 @@ def run_sql(c, sql, args=()):
 def init_db():
     with closing(conn()) as c:
         if DATABASE_URL and psycopg2:
-            # 1. إنشاء الجداول الأساسية لو مش موجودة
+            # 1. إنشاء الجداول الأساسية
             run_sql(c, """
             CREATE TABLE IF NOT EXISTS products(id TEXT PRIMARY KEY);
             CREATE TABLE IF NOT EXISTS price_history(product_id TEXT, price INTEGER, ts INTEGER);
             CREATE INDEX IF NOT EXISTS idx_hist ON price_history(product_id, ts);
             """)
-            # 2. ضمان وجود جميع الأعمدة أوتوماتيكياً في PostgreSQL
+            # 2. ضمان وجود الـ Primary Key لكي يعمل ON CONFLICT بنجاح
+            try:
+                run_sql(c, "ALTER TABLE products ADD PRIMARY KEY (id);")
+                c.commit()
+            except Exception:
+                try:
+                    c.rollback()
+                except:
+                    pass
+
+            # 3. ضمان وجود جميع الأعمدة
             columns_to_add = [
                 ("name", "TEXT"),
                 ("brand", "TEXT"),
@@ -64,7 +74,14 @@ def init_db():
                 ("specifications", "TEXT")
             ]
             for col_name, col_type in columns_to_add:
-                run_sql(c, f"ALTER TABLE products ADD COLUMN IF NOT EXISTS {col_name} {col_type}")
+                try:
+                    run_sql(c, f"ALTER TABLE products ADD COLUMN IF NOT EXISTS {col_name} {col_type}")
+                    c.commit()
+                except Exception:
+                    try:
+                        c.rollback()
+                    except:
+                        pass
         else:
             run_sql(c, """
             CREATE TABLE IF NOT EXISTS products(
