@@ -26,9 +26,7 @@ jobs:
 
       - name: Install server dependencies
         run: pip install -r requirements.txt
-     
 
-     - name: Fetch and save product prices
-  run: |
-    python -c "from stores import ADAPTERS; from main import upsert; [upsert(fetch()) for store_id, fetch in ADAPTERS.items()]"
-       
+      - name: Fetch and save product prices
+        run: |
+          python -c "from stores import ADAPTERS; from main import upsert; [upsert(fetch()) for store_id, fetch in ADAPTERS.items()]"
