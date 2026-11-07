@@ -43,22 +43,28 @@ def run_sql(c, sql, args=()):
 def init_db():
     with closing(conn()) as c:
         if DATABASE_URL and psycopg2:
+            # 1. إنشاء الجداول الأساسية لو مش موجودة
             run_sql(c, """
-            CREATE TABLE IF NOT EXISTS products(
-                id TEXT PRIMARY KEY, name TEXT, brand TEXT, category TEXT, store_id TEXT,
-                price INTEGER, old_price INTEGER, image_url TEXT, in_stock INTEGER, url TEXT,
-                updated_at INTEGER, specifications TEXT);
-            """)
-            run_sql(c, """
+            CREATE TABLE IF NOT EXISTS products(id TEXT PRIMARY KEY);
             CREATE TABLE IF NOT EXISTS price_history(product_id TEXT, price INTEGER, ts INTEGER);
-            """)
-            run_sql(c, """
             CREATE INDEX IF NOT EXISTS idx_hist ON price_history(product_id, ts);
             """)
-            # التصحيح هنا: استخدام cur.fetchone() بدل c.fetchone()
-            cur = run_sql(c, "SELECT column_name FROM information_schema.columns WHERE table_name='products' AND column_name='specifications'")
-            if not cur.fetchone():
-                run_sql(c, "ALTER TABLE products ADD COLUMN specifications TEXT")
+            # 2. ضمان وجود جميع الأعمدة أوتوماتيكياً في PostgreSQL
+            columns_to_add = [
+                ("name", "TEXT"),
+                ("brand", "TEXT"),
+                ("category", "TEXT"),
+                ("store_id", "TEXT"),
+                ("price", "INTEGER"),
+                ("old_price", "INTEGER"),
+                ("image_url", "TEXT"),
+                ("in_stock", "INTEGER"),
+                ("url", "TEXT"),
+                ("updated_at", "INTEGER"),
+                ("specifications", "TEXT")
+            ]
+            for col_name, col_type in columns_to_add:
+                run_sql(c, f"ALTER TABLE products ADD COLUMN IF NOT EXISTS {col_name} {col_type}")
         else:
             run_sql(c, """
             CREATE TABLE IF NOT EXISTS products(
