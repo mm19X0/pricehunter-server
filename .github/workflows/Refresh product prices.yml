@@ -29,4 +29,4 @@ jobs:
 
       - name: Fetch and save product prices
         run: |
-          python -c "from stores import ADAPTERS; from main import init_db, upsert; init_db(); [upsert(fetch()) for store_id, fetch in ADAPTERS.items()]"
+          python -c "from main import refresh; refresh()"
