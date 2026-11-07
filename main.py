@@ -55,8 +55,9 @@ def init_db():
             run_sql(c, """
             CREATE INDEX IF NOT EXISTS idx_hist ON price_history(product_id, ts);
             """)
-            run_sql(c, "SELECT column_name FROM information_schema.columns WHERE table_name='products' AND column_name='specifications'")
-            if not c.fetchone():
+            # التصحيح هنا: استخدام cur.fetchone() بدل c.fetchone()
+            cur = run_sql(c, "SELECT column_name FROM information_schema.columns WHERE table_name='products' AND column_name='specifications'")
+            if not cur.fetchone():
                 run_sql(c, "ALTER TABLE products ADD COLUMN specifications TEXT")
         else:
             run_sql(c, """
@@ -105,7 +106,7 @@ def upsert(items):
 
 
 def refresh():
-    init_db()  # ضمان إنشاء الجداول تلقائياً قبل أي عملية سحب
+    init_db()
     for store_id, fetch in ADAPTERS.items():
         try:
             items = fetch()
