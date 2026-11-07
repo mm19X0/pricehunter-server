@@ -9,20 +9,36 @@ from contextlib import asynccontextmanager, closing
 from apscheduler.schedulers.background import BackgroundScheduler
 from fastapi import FastAPI, Header, HTTPException, Query
 
+try:
+    import psycopg2
+    from psycopg2.extras import RealDictCursor
+except ImportError:
+    psycopg2 = None
+
 from stores import ADAPTERS
 
+DATABASE_URL = os.environ.get("DATABASE_URL")
 DB = os.environ.get("PRICEHUNTER_DB", "prices.db")
 
 
 def conn():
-    c = sqlite3.connect(DB)
-    c.row_factory = sqlite3.Row
-    return c
+    if DATABASE_URL and psycopg2:
+        return psycopg2.connect(DATABASE_URL, cursor_factory=RealDictCursor)
+    else:
+        c = sqlite3.connect(DB)
+        c.row_factory = sqlite3.Row
+        return c
+
+
+def run_sql(c, sql, args=()):
+    if DATABASE_URL and psycopg2:
+        sql = sql.replace("?", "%s")
+    return c.execute(sql, args)
 
 
 def init_db():
     with closing(conn()) as c:
-        c.executescript("""
+        run_sql(c, """
         CREATE TABLE IF NOT EXISTS products(
             id TEXT PRIMARY KEY, name TEXT, brand TEXT, category TEXT, store_id TEXT,
             price INTEGER, old_price INTEGER, image_url TEXT, in_stock INTEGER, url TEXT,
@@ -30,9 +46,14 @@ def init_db():
         CREATE TABLE IF NOT EXISTS price_history(product_id TEXT, price INTEGER, ts INTEGER);
         CREATE INDEX IF NOT EXISTS idx_hist ON price_history(product_id, ts);
         """)
-        columns = {row["name"] for row in c.execute("PRAGMA table_info(products)")}
-        if "specifications" not in columns:
-            c.execute("ALTER TABLE products ADD COLUMN specifications TEXT")
+        if DATABASE_URL and psycopg2:
+            run_sql(c, "SELECT column_name FROM information_schema.columns WHERE table_name='products' AND column_name='specifications'")
+            if not c.fetchone():
+                run_sql(c, "ALTER TABLE products ADD COLUMN specifications TEXT")
+        else:
+            columns = {row["name"] for row in run_sql(c, "PRAGMA table_info(products)")}
+            if "specifications" not in columns:
+                run_sql(c, "ALTER TABLE products ADD COLUMN specifications TEXT")
         c.commit()
 
 
@@ -40,16 +61,19 @@ def upsert(items):
     now = int(time.time())
     with closing(conn()) as c:
         for p in items:
-            last = c.execute("SELECT price FROM price_history WHERE product_id=? ORDER BY ts DESC LIMIT 1",
-                             (p["id"],)).fetchone()
-            if last is None or last["price"] != p["price"]:
-                c.execute("INSERT INTO price_history VALUES(?,?,?)", (p["id"], p["price"], now))
-            # If the store gives no old price, use the highest price seen in the last 30 days.
-            hi = c.execute("SELECT MAX(price) m FROM price_history WHERE product_id=? AND ts>?",
-                           (p["id"], now - 30 * 86400)).fetchone()["m"]
+            last = run_sql(c, "SELECT price FROM price_history WHERE product_id=? ORDER BY ts DESC LIMIT 1",
+                           (p["id"],)).fetchone()
+            last_price = last["price"] if last else None
+            if last is None or last_price != p["price"]:
+                run_sql(c, "INSERT INTO price_history VALUES(?,?,?)", (p["id"], p["price"], now))
+            
+            hi_row = run_sql(c, "SELECT MAX(price) m FROM price_history WHERE product_id=? AND ts>?",
+                             (p["id"], now - 30 * 86400)).fetchone()
+            hi = hi_row["m"] if hi_row else None
             old = p.get("oldPrice") or (hi if hi and hi > p["price"] else None)
             specifications = p.get("specifications")
-            c.execute("""INSERT INTO products
+            
+            run_sql(c, """INSERT INTO products
                 (id, name, brand, category, store_id, price, old_price, image_url,
                  in_stock, url, updated_at, specifications)
                 VALUES(?,?,?,?,?,?,?,?,?,?,?,?)
@@ -106,7 +130,7 @@ def products(
     sql += " ORDER BY id LIMIT ? OFFSET ?"
     args.extend((limit, offset))
     with closing(conn()) as c:
-        rows = c.execute(sql, args).fetchall()
+        rows = run_sql(c, sql, args).fetchall()
     return [{
         "id": r["id"], "name": r["name"], "brand": r["brand"], "category": r["category"],
         "storeId": r["store_id"], "price": r["price"], "oldPrice": r["old_price"],
@@ -118,8 +142,8 @@ def products(
 @app.get("/products/{product_id}/history")
 def history(product_id: str):
     with closing(conn()) as c:
-        rows = c.execute("SELECT price, ts FROM price_history WHERE product_id=? ORDER BY ts",
-                         (product_id,)).fetchall()
+        rows = run_sql(c, "SELECT price, ts FROM price_history WHERE product_id=? ORDER BY ts",
+                       (product_id,)).fetchall()
     return [{"price": r["price"], "ts": r["ts"]} for r in rows]
 
 
