@@ -33,7 +33,11 @@ def conn():
 def run_sql(c, sql, args=()):
     if DATABASE_URL and psycopg2:
         sql = sql.replace("?", "%s")
-    return c.execute(sql, args)
+        cur = c.cursor()
+        cur.execute(sql, args)
+        return cur
+    else:
+        return c.execute(sql, args)
 
 
 def init_db():
