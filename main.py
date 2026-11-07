@@ -42,19 +42,31 @@ def run_sql(c, sql, args=()):
 
 def init_db():
     with closing(conn()) as c:
-        run_sql(c, """
-        CREATE TABLE IF NOT EXISTS products(
-            id TEXT PRIMARY KEY, name TEXT, brand TEXT, category TEXT, store_id TEXT,
-            price INTEGER, old_price INTEGER, image_url TEXT, in_stock INTEGER, url TEXT,
-            updated_at INTEGER, specifications TEXT);
-        CREATE TABLE IF NOT EXISTS price_history(product_id TEXT, price INTEGER, ts INTEGER);
-        CREATE INDEX IF NOT EXISTS idx_hist ON price_history(product_id, ts);
-        """)
         if DATABASE_URL and psycopg2:
+            run_sql(c, """
+            CREATE TABLE IF NOT EXISTS products(
+                id TEXT PRIMARY KEY, name TEXT, brand TEXT, category TEXT, store_id TEXT,
+                price INTEGER, old_price INTEGER, image_url TEXT, in_stock INTEGER, url TEXT,
+                updated_at INTEGER, specifications TEXT);
+            """)
+            run_sql(c, """
+            CREATE TABLE IF NOT EXISTS price_history(product_id TEXT, price INTEGER, ts INTEGER);
+            """)
+            run_sql(c, """
+            CREATE INDEX IF NOT EXISTS idx_hist ON price_history(product_id, ts);
+            """)
             run_sql(c, "SELECT column_name FROM information_schema.columns WHERE table_name='products' AND column_name='specifications'")
             if not c.fetchone():
                 run_sql(c, "ALTER TABLE products ADD COLUMN specifications TEXT")
         else:
+            run_sql(c, """
+            CREATE TABLE IF NOT EXISTS products(
+                id TEXT PRIMARY KEY, name TEXT, brand TEXT, category TEXT, store_id TEXT,
+                price INTEGER, old_price INTEGER, image_url TEXT, in_stock INTEGER, url TEXT,
+                updated_at INTEGER, specifications TEXT);
+            CREATE TABLE IF NOT EXISTS price_history(product_id TEXT, price INTEGER, ts INTEGER);
+            CREATE INDEX IF NOT EXISTS idx_hist ON price_history(product_id, ts);
+            """)
             columns = {row["name"] for row in run_sql(c, "PRAGMA table_info(products)")}
             if "specifications" not in columns:
                 run_sql(c, "ALTER TABLE products ADD COLUMN specifications TEXT")
@@ -93,6 +105,7 @@ def upsert(items):
 
 
 def refresh():
+    init_db()  # ضمان إنشاء الجداول تلقائياً قبل أي عملية سحب
     for store_id, fetch in ADAPTERS.items():
         try:
             items = fetch()
