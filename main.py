@@ -54,19 +54,64 @@ def init_db():
 
 
 def upsert(items):
+    if not items:
+        return
     now = int(time.time())
+    product_ids = [p["id"] for p in items]
+    
     with closing(conn()) as c:
-        for p in items:
-            last = run_sql(c, "SELECT price FROM price_history WHERE product_id=? ORDER BY ts DESC LIMIT 1",
-                           (p["id"],)).fetchone()
-            last_price = last["price"] if last else None
-            if last is None or last_price != p["price"]:
-                run_sql(c, "INSERT INTO price_history VALUES(?,?,?)", (p["id"], p["price"], now))
+        # 1. جلب آخر سعر لكل المنتجات دفعة واحدة لتجنب الاستعلامات المتكررة
+        last_prices = {}
+        max_prices = {}
+        
+        if product_ids:
+            # تقسيم الـ IDs لتجنب حدود الـ Query length لو القائمة كبيرة
+            placeholders = ",".join(["%s" if (DATABASE_URL and psycopg2) else "?"] * len(product_ids))
             
-            hi_row = run_sql(c, "SELECT MAX(price) m FROM price_history WHERE product_id=? AND ts>?",
-                             (p["id"], now - 30 * 86400)).fetchone()
-            hi = hi_row["m"] if hi_row else None
-            old = p.get("oldPrice") or (hi if hi and hi > p["price"] else None)
+            # جلب أحدث سعر لكل منتج
+            hist_sql = f"""
+                SELECT product_id, price, ts FROM (
+                    SELECT product_id, price, ts,
+                           ROW_NUMBER() OVER(PARTITION BY product_id ORDER BY ts DESC) as rn
+                    FROM price_history WHERE product_id IN ({placeholders})
+                ) t WHERE rn = 1
+            """
+            cur = run_sql(c, hist_sql, product_ids)
+            for row in cur.fetchall():
+                # التعامل مع شكل الـ Row سواء كان RealDictCursor أو sqlite3.Row
+                r = dict(row) if hasattr(row, "keys") else row
+                last_prices[r["product_id"]] = r["price"]
+
+            # جلب أعلى سعر في آخر 30 يوم دفعة واحدة
+            thirty_days_ago = now - 30 * 86400
+            max_sql = f"""
+                SELECT product_id, MAX(price) as m 
+                FROM price_history 
+                WHERE product_id IN ({placeholders}) AND ts > ? 
+                GROUP BY product_id
+            """
+            # تعديل علامة الاستفهام لو postgresql
+            if DATABASE_URL and psycopg2:
+                max_sql = max_sql.replace("?", "%s")
+            
+            max_args = product_ids + [thirty_days_ago]
+            cur_max = run_sql(c, max_sql, max_args)
+            for row in cur_max.fetchall():
+                r = dict(row) if hasattr(row, "keys") else row
+                max_prices[r["product_id"]] = r["m"]
+
+        # 2. تنفيذ عمليات الحفظ في الذاكرة ثم إرسالها دفعة واحدة
+        for p in items:
+            pid = p["id"]
+            current_price = p["price"]
+            last_price = last_prices.get(pid)
+            
+            # إدخال في تاريخ الأسعار لو السعر تغير أو مش موجود
+            if last_price is None or last_price != current_price:
+                run_sql(c, "INSERT INTO price_history VALUES(?,?,?)", (pid, current_price, now))
+            
+            hi = max_prices.get(pid)
+            old = p.get("oldPrice") or (hi if hi and hi > current_price else None)
             specifications = p.get("specifications")
             
             run_sql(c, """INSERT INTO products
@@ -78,7 +123,7 @@ def upsert(items):
                 image_url=excluded.image_url, in_stock=excluded.in_stock, url=excluded.url,
                 updated_at=excluded.updated_at,
                 specifications=COALESCE(excluded.specifications, products.specifications)""",
-                      (p["id"], p["name"], p["brand"], p["category"], p["storeId"], p["price"], old,
+                      (pid, p["name"], p["brand"], p["category"], p["storeId"], current_price, old,
                        p.get("imageUrl"), int(p.get("inStock", True)), p["url"], now,
                        json.dumps(specifications, ensure_ascii=False) if specifications else None))
         c.commit()
